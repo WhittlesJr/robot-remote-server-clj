@@ -96,7 +96,7 @@
                                         (->> (apply a-fn args)
                                              handle-return-val
                                              StringEscapeUtils/escapeXml))
-                                 (catch Exception e
+                                 (catch Throwable e
                                    (swap! result assoc
                                           :status "FAIL"
                                           :error (->> (prn e)
