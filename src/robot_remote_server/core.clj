@@ -105,18 +105,19 @@
   [a-ns kw-name args]
   (if (= kw-name "stop_remote_server")
     (stop-remote-server*)
-    (let [a-fn   (kw-name->fn a-ns kw-name)
-          s      (new java.io.StringWriter)]
+    (let [a-fn (kw-name->fn a-ns kw-name)
+          s    (new java.io.StringWriter)]
       (binding [*out* s]
-        (->> (try
-               {:return (apply a-fn args)}
-               (catch Throwable e
-                 {:status    "FAIL"
-                  :error     (with-out-str (prn e))
-                  :traceback (with-out-str (st/print-stack-trace e))}))
-             (merge return-val-defaults
-                    {:output (str s)})
-             (encore/map-vals sanitize-str))))))
+        (let [result (try
+                       {:return (apply a-fn args)}
+                       (catch Throwable e
+                         {:status    "FAIL"
+                          :error     (with-out-str (prn e))
+                          :traceback (with-out-str (st/print-stack-trace e))}))]
+          (->> result
+               (merge return-val-defaults
+                      {:output (str s)})
+               (encore/map-vals sanitize-str)))))))
 
 ;; WARNING: Less-than-functional code follows
 ;;
