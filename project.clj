@@ -3,6 +3,8 @@
   :dependencies [[org.clojure/clojure "1.10.1"]
                  [ring/ring-jetty-adapter "0.3.6"]
                  [necessary-evil "2.0.2"]
+                 [com.taoensso/encore "2.96.0"]
+                 [lambdaisland/ansi "0.1.6"]
                  [commons-lang/commons-lang "2.6"]]
   :dev-dependencies [[swank-clojure "1.4.3"]
                      [marginalia "0.9.1"]]

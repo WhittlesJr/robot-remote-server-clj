@@ -1,6 +1,8 @@
 {:deps    {org.clojure/clojure       {:mvn/version "1.10.1"}
            ring/ring-jetty-adapter   {:mvn/version "0.3.6"}
+           lambdaisland/ansi         {:mvn/version "0.1.6"}
            necessary-evil            {:mvn/version "2.0.2"}
+           com.taoensso/encore       {:mvn/version "2.96.0"}
            commons-lang/commons-lang {:mvn/version "2.6"}}
  :aliases {:test {:main-opts ["-m" "robot-remote-server.keywords"]}
            :dev  {:extra-paths ["dev"]

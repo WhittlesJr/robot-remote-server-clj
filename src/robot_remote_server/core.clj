@@ -18,13 +18,13 @@
 ;; server using the `wrap-rpc` middleware defined in this namespace.
 ;;
 (ns robot-remote-server.core
-  (:require [necessary-evil.core :as xml-rpc]
+  (:require [clojure.stacktrace :as st]
+            [clojure.string :as str]
+            [lambdaisland.ansi :as ansi]
+            [necessary-evil.core :as xml-rpc]
             [necessary-evil.value :as value]
-            [clojure.string :as str])
-  (:import org.mortbay.jetty.Server
-           org.apache.commons.lang.StringEscapeUtils)
-  (:use robot-remote-server.util
-        ring.adapter.jetty))
+            [ring.adapter.jetty :refer :all]
+            [taoensso.encore :as encore]))
 
 (defonce rrs-instance (atom nil))
 (defonce enable-remote-stop (atom nil))
@@ -39,6 +39,11 @@
   [s]
   (str/replace s "_" "-"))
 
+(defn kw-name->fn
+  [a-ns kw-name]
+  (->> (clojurify-name kw-name)
+       (find-kw-fn a-ns)))
+
 (defn wrap-rpc
   "Ring middleware to limit server's response to the particular path that RobotFramework petitions"
   [handler]
@@ -50,12 +55,11 @@
 (defn get-keyword-arguments*
   "Get arguments for a given RF keyword function identified by the string `kw-name` and located in the `a-ns` namespace"
   [a-ns kw-name]
-  (let [clj-kw-name (clojurify-name kw-name)
-        a-fn (find-kw-fn a-ns clj-kw-name)
+  (let [a-fn         (kw-name->fn a-ns kw-name)
         args-as-strs (map str (last (:arglists (meta a-fn))))]
     (if (and (> (count args-as-strs) 1)
              (= "&" (nth args-as-strs (- (count args-as-strs) 2))))
-      (let [last-arg (last args-as-strs)
+      (let [last-arg     (last args-as-strs)
             trimmed-args (drop-last 2 args-as-strs)]
         (conj (vec trimmed-args) (str "*" last-arg)))
       args-as-strs)))
@@ -63,9 +67,9 @@
 (defn get-keyword-documentation*
   "Get documentation string for a given RF keyword function identified by the string `kw-name` and located in the `a-ns` namespace"
   [a-ns kw-name]
-  (let [clj-kw-name (clojurify-name kw-name)
-        a-fn (find-kw-fn a-ns clj-kw-name)]
-    (:doc (meta a-fn))))
+  (-> (kw-name->fn a-ns kw-name)
+      :doc
+      (meta)))
 
 (defn get-keyword-names*
   "Get a vector of RF keyword functions located in the `a-ns` namespace"
@@ -79,35 +83,40 @@
    "stop_remote_server"))
 
 (declare stop-remote-server*)
+
+(def return-val-defaults
+  "RF expects this map"
+  {:status    "PASS",
+   :return    "",
+   :output    "",
+   :error     "",
+   :traceback ""})
+
+(defn sanitize-str [s]
+  (->> (ansi/text->hiccup s)
+       (map last)
+       (str/join)
+       (#(str/split % #"\\n"))
+       (str/join "\n")))
+
 (defn run-keyword*
-  "Given a RF-formatted string representation of a Clojure function `kw-name` in the `a-ns` namespace called with `args` as a vector, evaluate the function"
+  "Given a RF-formatted string representation of a Clojure function `kw-name` in
+  the `a-ns` namespace called with `args` as a vector, evaluate the function"
   [a-ns kw-name args]
   (if (= kw-name "stop_remote_server")
     (stop-remote-server*)
-    (let [result (atom {:status "PASS",        ; RF expects this map
-                        :return "",
-                        :output "",
-                        :error "",
-                        :traceback ""})
-          clj-kw-name (clojurify-name kw-name) ; translate RF keyword to Clojure fn
-          a-fn (find-kw-fn a-ns clj-kw-name)
-          output (with-out-str (try
-                                 (swap! result assoc :return
-                                        (->> (apply a-fn args)
-                                             handle-return-val
-                                             StringEscapeUtils/escapeXml))
-                                 (catch Throwable e
-                                   (swap! result assoc
-                                          :status "FAIL"
-                                          :error (->> (prn e)
-                                                      with-out-str
-                                                      StringEscapeUtils/escapeXml)
-                                          :traceback (->> (.printStackTrace e)
-                                                          with-out-str
-                                                          StringEscapeUtils/escapeXml))
-                                   @result)))]
-      (swap! result assoc :output output)
-      @result)))
+    (let [a-fn   (kw-name->fn a-ns kw-name)
+          s      (new java.io.StringWriter)]
+      (binding [*out* s]
+        (->> (try
+               {:return (apply a-fn args)}
+               (catch Throwable e
+                 {:status    "FAIL"
+                  :error     (with-out-str (prn e))
+                  :traceback (with-out-str (st/print-stack-trace e))}))
+             (merge return-val-defaults
+                    {:output (str s)})
+             (encore/map-vals sanitize-str))))))
 
 ;; WARNING: Less-than-functional code follows
 ;;
@@ -116,7 +125,8 @@
 ;; `stop_remote_server` command if desired.
 
 (defn stop-remote-server*
-  "Either stop the remote server (if enabled), or send a message explaining that it's disabled and what to do if you want to enable it"
+  "Either stop the remote server (if enabled), or send a message explaining that
+  it's disabled and what to do if you want to enable it"
   []
   (if (true? @enable-remote-stop)
     (do
@@ -155,12 +165,12 @@
   ([hndlr] (server-start! hndlr true {:port 8270, :join? false})) ; default to `true` to remain faithful to the RF spec
   ([hndlr enable-stop] (server-start! hndlr enable-stop {:port 8270, :join? false}))
   ([hndlr enable-stop opts]
-     (when (and (not (nil? @rrs-instance)) (.isRunning @rrs-instance))
-       (.stop @rrs-instance))
-     (if (true? enable-stop)
-       (reset! enable-remote-stop true)
-       (reset! enable-remote-stop false))
-     (reset! rrs-instance (run-jetty hndlr opts))))
+   (when (and (not (nil? @rrs-instance)) (.isRunning @rrs-instance))
+     (.stop @rrs-instance))
+   (if (true? enable-stop)
+     (reset! enable-remote-stop true)
+     (reset! enable-remote-stop false))
+   (reset! rrs-instance (run-jetty hndlr opts))))
 
 (defn server-stop!
   "Stop the global Jetty server instance"
